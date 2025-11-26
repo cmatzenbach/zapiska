@@ -1,0 +1,13 @@
+# Zapiska vocabulary data directory
+zapiska-data/
+
+# Emacs temporary files
+*~
+\#*\#
+.\#*
+
+# Byte-compiled files
+*.elc
+
+# Backup files
+*.bak
