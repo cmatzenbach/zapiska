@@ -166,20 +166,19 @@ This is used for serializing the database to disk."
   "Convert ALIST to a hash table.
 
 This is used for loading the database from disk."
-  ;; TODO: Implement alist to hash table conversion
-  ;; Hint: Create new hash table, iterate over alist with dolist
-  )
+  (let ((zapiska-data (make-hash-table)))
+    (dolist (row alist)
+      (puthash (car row) (cdr row) zapiska-data))
+    zapiska-data))
 
 (defun zapiska--get-data-file ()
   "Return the full path to the vocabulary data file."
-  ;; TODO: Combine zapiska-data-directory with filename
-  ;; Hint: Use expand-file-name
-  )
+  (expand-file-name "vocab-data.el" zapiska-data-directory))
 
 
 (defun zapiska-add-test-data ()
   "Add some test vocabulary words for development.
-Only use this during development!"
+Only for development use."
   (interactive)
   (let ((test-words
          '(("слово" "word" "Common noun")
