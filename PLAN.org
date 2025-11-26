@@ -1,0 +1,678 @@
+#+TITLE: Zapiska: Russian Vocabulary Learning Package for Emacs
+#+AUTHOR: Chris Matzenbach
+#+DATE: 2025-11-25
+
+* Overview
+
+Zapiska is a standalone Emacs package for learning Russian vocabulary with spaced repetition, quiz modes, passive study mode, and a visual Cyrillic keyboard reference. The package follows your existing Emacs patterns (hydra menus, evil keybindings, spacemacs-style leader keys) and is designed to be educational for learning elisp.
+
+* Project Structure
+
+#+BEGIN_SRC
+~/Projects/zapiska/
+├── zapiska.el                   # Main package file (~800-1000 lines)
+├── zapiska-data/                # User vocabulary data directory
+│   ├── vocab-data.el           # Persisted vocabulary database
+│   └── backups/                # Auto-generated backups
+│       └── vocab-*.el
+├── README.md                    # Package documentation
+├── PLAN.org                     # This planning document
+└── .gitignore                  # Ignore data files
+#+END_SRC
+
+* Data Storage: Elisp Plists
+
+** Recommendation
+
+Use elisp property lists (plists) stored in a dedicated =.el= file.
+
+** Rationale
+
+- Native elisp data structures - no external dependencies
+- Easy to understand as you learn elisp
+- Direct serialization via =prin1= and =read=
+- Fast in-memory access via hash tables
+- Version control friendly (plain text)
+- Simpler than org-mode (which you noted is unfamiliar)
+
+** Data Schema
+
+#+BEGIN_SRC elisp
+;; Global hash table: UUID → vocab entry plist
+(defvar zapiska-db (make-hash-table :test 'equal))
+
+;; Entry structure:
+'(:id "uuid-string"
+  :russian "слово"
+  :english "word"
+  :mastery-level 0        ; 0-5 scale
+  :easiness 2.5           ; SM-2 factor (1.3-2.5)
+  :repetitions 0          ; Successful recall count
+  :interval 0             ; Days until next review
+  :next-review nil        ; Timestamp or nil
+  :last-reviewed nil      ; Last review timestamp
+  :times-seen 0           ; Total quiz appearances
+  :times-correct 0        ; Total correct answers
+  :created (current-time)
+  :notes "")
+
+;; Statistics tracking:
+(defvar zapiska-stats
+  '(:total-sessions 0
+    :total-reviews 0
+    :total-correct 0
+    :current-streak 0
+    :longest-streak 0
+    :last-session nil))
+#+END_SRC
+
+** File Location
+
+=~/Projects/zapiska/zapiska-data/vocab-data.el=
+
+* Core Features Implementation
+
+** 1. Vocabulary List Mode
+
+*** Base
+
+Derive from =tabulated-list-mode= for automatic sorting and column management.
+
+*** Display Format
+
+#+BEGIN_EXAMPLE
+Russian      English       Mastery  Next Review    Seen  Accuracy
+-------------------------------------------------------------------------
+слово        word          ★★★☆☆    2025-11-28     45    91%
+привет       hello         ★★★★★    2025-12-15     120   98%
+#+END_EXAMPLE
+
+*** Evil-mode Keybindings
+
+| Key   | Action                                  |
+|-------+-----------------------------------------|
+| a     | Add new word                            |
+| d     | Delete word at point                    |
+| e     | Edit word at point                      |
+| RET   | View word details                       |
+| r     | Refresh list                            |
+| q     | Quit                                    |
+| i     | Import CSV                              |
+| x     | Export CSV                              |
+| X     | Export to Anki format                   |
+
+*** Implementation Approach
+
+- Define =zapiska-list-mode= derived from =tabulated-list-mode=
+- Use =tabulated-list-entries= to populate from hash table
+- Add =evil-define-key= for normal state bindings
+- Auto-save data after each modification
+
+** 2. Quiz Mode
+
+*** Workflow
+
+1. User starts quiz with filter (all/due/new/low-mastery)
+2. System randomly chooses direction (Russian→English or English→Russian)
+3. Display word in large font in dedicated buffer
+4. User types answer in minibuffer
+5. Immediate feedback (✓ correct / ✗ incorrect + correct answer)
+6. Wrong answers re-queued for same session
+7. SM-2 algorithm updates scheduling
+8. Statistics updated
+
+*** Quiz Session State
+
+#+BEGIN_SRC elisp
+(defvar zapiska-quiz-session nil)
+;; Structure:
+'(:active t
+  :queue (list of word IDs)
+  :incorrect-queue nil
+  :current-word-id nil
+  :direction 'russian-to-english  ; or 'english-to-russian
+  :start-time (current-time)
+  :words-reviewed 0
+  :correct-count 0)
+#+END_SRC
+
+*** Answer Checking
+
+- Exact match (case-insensitive, whitespace-trimmed)
+- Fuzzy matching: allow 1-character Levenshtein distance for words >4 characters
+- Accept alternate forms if defined in entry
+
+*** UI Design
+
+- Dedicated =*Zapiska Quiz*= buffer (70% height, top)
+- Large centered word display using custom face
+- Progress indicator: "5/10 words | 15 remaining in queue"
+- Minibuffer input for answers
+
+** 3. Visual Cyrillic Keyboard Reference
+
+*** Layout
+
+#+BEGIN_EXAMPLE
+╔═══════════════════════════════════════════════════════════╗
+║            Cyrillic Keyboard Reference                    ║
+║           (russian-computer input method)                 ║
+╠═══════════════════════════════════════════════════════════╣
+║                                                           ║
+║  q → й    w → ц    e → у    r → к    t → е    y → н     ║
+║  u → г    i → ш    o → щ    p → з    [ → х    ] → ъ     ║
+║                                                           ║
+║  a → ф    s → ы    d → в    f → а    g → п    h → р     ║
+║  j → о    k → л    l → д    ; → ж    ' → э               ║
+║                                                           ║
+║  z → я    x → ч    c → с    v → м    b → и    n → т     ║
+║  m → ь    , → б    . → ю                                 ║
+║                                                           ║
+║  Shift key for capitals    ` → ё                         ║
+╚═══════════════════════════════════════════════════════════╝
+#+END_EXAMPLE
+
+*** Implementation
+
+- Derive from =special-mode= (read-only, standard quit bindings)
+- Side window configuration: bottom, 30% height
+- Toggleable via =zapiska-toggle-keyboard-reference=
+- Auto-show during quiz if =zapiska-show-keyboard-in-quiz= is non-nil
+- Use =display-buffer-alist= for consistent positioning
+
+*** Display Buffer Config
+
+#+BEGIN_SRC elisp
+(add-to-list 'display-buffer-alist
+             '("^\\*Zapiska Keyboard"
+               (display-buffer-in-side-window)
+               (side . bottom)
+               (window-height . 0.3)))
+#+END_SRC
+
+** 4. Study Mode (Passive Learning)
+
+*** Overview
+
+Study mode provides a passive vocabulary learning window that displays a selection of words while you work. It's designed to sit in a side window where you can glance at it periodically without interrupting your workflow.
+
+*** Display Format
+
+#+BEGIN_EXAMPLE
+┌─────────────────────────────────┐
+│  *Zapiska Study*                │
+│                                 │
+│  слово      → word              │
+│  привет     → hello             │
+│  спасибо    → thank you         │
+│  пожалуйста → please            │
+│  хорошо     → good/well         │
+│  день       → day               │
+│  ночь       → night             │
+│                                 │
+│  [7/150 words]                  │
+│  [r]efresh  [q]uit              │
+└─────────────────────────────────┘
+#+END_EXAMPLE
+
+*** Features
+
+- Side window (right, 25-30% width) for non-intrusive display
+- Shows configurable number of words (default 7, via =zapiska-study-word-count=)
+- Random selection OR words due for review
+- Manual refresh via =r= key
+- Optional auto-refresh every N seconds (via =zapiska-study-auto-refresh-interval=)
+- Can cycle through batches of words
+- Non-interactive - purely for passive exposure and memorization
+
+*** Implementation
+
+- Derive from =special-mode= (read-only, standard quit bindings)
+- Side window configuration: right, 28% width
+- Timer-based auto-refresh if configured
+- =zapiska-study-mode-open= to launch
+- =zapiska-study-refresh= to show new batch
+- =zapiska-study-quit= to close and cancel timer
+
+*** Display Buffer Config
+
+#+BEGIN_SRC elisp
+(add-to-list 'display-buffer-alist
+             '("^\\*Zapiska Study\\*"
+               (display-buffer-in-side-window)
+               (side . right)
+               (window-width . 0.28)))
+#+END_SRC
+
+*** Use Cases
+
+- Keep open while coding to passively absorb vocabulary
+- Glance at during compilation/loading times
+- Background exposure to reinforce learning
+- Quick review without committing to full quiz session
+
+** 5. Spaced Repetition (SM-2 Algorithm)
+
+*** Algorithm
+
+- Quality: 5 (correct) or 2 (incorrect)
+- Easiness factor: E = E + (0.1 - (5-q) * (0.08 + (5-q) * 0.02))
+- Intervals:
+  - Repetition 1: 1 day
+  - Repetition 2: 6 days
+  - Repetition n: interval * easiness
+- Incorrect answer: reset to repetition 0, interval 1 day
+
+*** Mastery Level (0-5)
+
+Based on repetitions and easiness factor:
+
+| Level | Description                   |
+|-------+-------------------------------|
+|     0 | Never reviewed                |
+|     1 | 1-2 repetitions               |
+|     2 | 3-5 repetitions               |
+|     3 | 6-10 repetitions, E > 2.0     |
+|     4 | 11-20 repetitions, E > 2.2    |
+|     5 | 21+ repetitions, E > 2.4      |
+
+*** Implementation
+
+- =zapiska-update-word-schedule= function
+- Called after each quiz answer
+- Calculates next review date
+- Updates mastery level
+
+** 6. Statistics Dashboard
+
+*** Metrics Displayed
+
+- Total words in database
+- Words by mastery level (bar chart with stars)
+- Total sessions / reviews
+- Overall accuracy percentage
+- Current streak (consecutive days)
+- Longest streak
+- Words due today
+- Last 10 session summaries
+
+*** Buffer Format
+
+#+BEGIN_EXAMPLE
+╔════════════════════════════════════════╗
+║   Zapiska Statistics                   ║
+╠════════════════════════════════════════╣
+║                                        ║
+║  Overall                               ║
+║  Total words: 150                      ║
+║  Total sessions: 45                    ║
+║  Overall accuracy: 87.3%               ║
+║                                        ║
+║  Streaks                               ║
+║  Current: 7 days 🔥                    ║
+║  Longest: 12 days                      ║
+║                                        ║
+║  Mastery Distribution                  ║
+║  Level 0 ☆☆☆☆☆: 15 words  ████         ║
+║  Level 1 ★☆☆☆☆: 25 words  ███████      ║
+║  Level 2 ★★☆☆☆: 30 words  █████████    ║
+║  Level 3 ★★★☆☆: 40 words  ████████████ ║
+║  Level 4 ★★★★☆: 25 words  ███████      ║
+║  Level 5 ★★★★★: 15 words  ████         ║
+║                                        ║
+║  Due for Review                        ║
+║  Today: 12 words                       ║
+║  This week: 45 words                   ║
+║                                        ║
+╚════════════════════════════════════════╝
+#+END_EXAMPLE
+
+*** Implementation
+
+- Side window (right, 40% width) or full buffer
+- Read-only special-mode
+- Refresh keybinding
+
+** 7. Import/Export
+
+*** CSV Format
+
+#+BEGIN_EXAMPLE
+russian,english,notes
+слово,word,"Common noun"
+привет,hello,"Greeting"
+#+END_EXAMPLE
+
+*** Anki TSV Format
+
+#+BEGIN_EXAMPLE
+слово	word	Common noun
+привет	hello	Greeting
+#+END_EXAMPLE
+
+*** Implementation
+
+- =zapiska-import-csv=: Parse CSV, create entries with default values
+- =zapiska-export-csv=: Write all words to CSV
+- =zapiska-export-anki=: Write TSV format for Anki import
+- Error handling for malformed input
+
+* Hydra Menu Structure
+
+** Main Entry Hydra
+
+#+BEGIN_SRC elisp
+(defhydra hydra-zapiska (:color blue :hint nil)
+  "
+^Quiz^              ^Manage^           ^Stats^             ^Import/Export^
+─────────────────────────────────────────────────────────────────────────────
+_q_: Quiz all       _l_: Vocab list    _s_: Statistics     _i_: Import CSV
+_d_: Quiz due       _a_: Add word      _S_: Session hist   _x_: Export CSV
+_n_: Quiz new       _k_: Keyboard                          _X_: Export Anki
+_m_: Low mastery
+"
+  ("q" (zapiska-start-quiz 'all))
+  ("d" (zapiska-start-quiz 'due))
+  ("n" (zapiska-start-quiz 'new))
+  ("m" (zapiska-start-quiz 'low-mastery))
+  ("l" zapiska-open-list)
+  ("a" zapiska-add-word)
+  ("k" zapiska-toggle-keyboard-reference)
+  ("s" zapiska-show-statistics)
+  ("S" zapiska-show-session-history)
+  ("i" zapiska-import-csv)
+  ("x" zapiska-export-csv)
+  ("X" zapiska-export-anki))
+#+END_SRC
+
+** Quiz Control Hydra
+
+#+BEGIN_SRC elisp
+(defhydra hydra-zapiska-quiz (:color pink :hint nil)
+  "
+^Control^          ^View^
+────────────────────────────────
+_n_: Next (skip)   _k_: Keyboard
+_q_: Quit quiz     _s_: Stats
+"
+  ("n" zapiska-quiz-skip-word)
+  ("k" zapiska-toggle-keyboard-reference)
+  ("s" zapiska-show-statistics)
+  ("q" zapiska-quit-quiz :exit t))
+#+END_SRC
+
+Accessible via =zapiska-quiz-mode-map=.
+
+* Integration with Existing Config
+
+** Loading in init.el
+
+Add to =/home/cmatzenbach/.emacs.d/init.el= around line 932:
+
+#+BEGIN_SRC elisp
+;; Load Zapiska (Russian vocabulary learning)
+(add-to-list 'load-path "~/Projects/zapiska")
+(require 'zapiska)
+#+END_SRC
+
+** Keybindings via general.el
+
+Add to init.el around line 446 (after other application keys):
+
+#+BEGIN_SRC elisp
+;; Zapiska - Russian vocabulary
+"av" '(:ignore t :which-key "Vocabulary")
+"avv" 'hydra-zapiska/body                     ; Main menu
+"avq" '(zapiska-start-quiz :which-key "Quick quiz")
+"avl" 'zapiska-open-list                      ; Vocab list
+"ava" 'zapiska-add-word                       ; Quick add
+"avs" 'zapiska-show-statistics                ; Stats
+"avk" 'zapiska-toggle-keyboard-reference      ; Keyboard
+#+END_SRC
+
+** Resulting Keybindings
+
+| Keybinding | Action                          |
+|------------+---------------------------------|
+| SPC a v v  | Main zapiska hydra              |
+| SPC a v q  | Start quiz (all words)          |
+| SPC a v l  | Open vocabulary list            |
+| SPC a v a  | Add new word                    |
+| SPC a v s  | Show statistics                 |
+| SPC a v k  | Toggle keyboard reference       |
+
+** Hydra Integration
+
+Add to =/home/cmatzenbach/.emacs.d/config/helper-functions.el= in =hydra-by-major-mode= (around line 134):
+
+#+BEGIN_SRC elisp
+(zapiska-list-mode
+ (hydra-zapiska/body))
+(zapiska-quiz-mode
+ (hydra-zapiska-quiz/body))
+#+END_SRC
+
+* Implementation Phases
+
+** Phase 1: Core Infrastructure (MVP)
+
+*** Deliverable
+Basic vocabulary management and simple quiz
+
+*** Tasks
+1. Package structure and metadata
+2. Data structures (hash table, plists)
+3. Persistence functions (save/load from .el file)
+4. Vocabulary list mode (tabulated-list-mode)
+5. CRUD operations (add/edit/delete words)
+6. Basic quiz mode with exact-match checking
+7. Main hydra menu
+
+*** Size
+~500 lines
+
+*** Status
+First working prototype
+
+** Phase 2: Spaced Repetition
+
+*** Deliverable
+Intelligent scheduling and statistics
+
+*** Tasks
+1. Implement SM-2 algorithm
+2. Quiz session state management
+3. Word filtering (due/new/low-mastery)
+4. Statistics tracking
+5. Statistics dashboard
+6. Session history
+
+*** Size
+~250 lines
+
+*** Status
+Core learning features complete
+
+** Phase 3: Cyrillic Keyboard Reference
+
+*** Deliverable
+Visual keyboard aid
+
+*** Tasks
+1. Keyboard layout buffer
+2. Side window configuration
+3. Toggle functionality
+4. Integration with quiz mode
+5. Customization option (auto-show in quiz)
+
+*** Size
+~100 lines
+
+*** Status
+User experience enhancement
+
+** Phase 4: Polish & Import/Export
+
+*** Deliverable
+Production-ready package
+
+*** Tasks
+1. CSV import/export
+2. Anki TSV export
+3. Fuzzy answer matching (Levenshtein distance)
+4. Backup management (keep last 10)
+5. Custom faces for doom-challenger-deep theme
+6. Comprehensive docstrings
+7. README documentation
+8. Error handling and validation
+
+*** Size
+~200 lines
+
+*** Status
+Complete, shareable package
+
+** Total Estimated Size
+
+800-1000 lines of elisp
+
+* Key Technical Decisions
+
+** Why Hash Tables?
+- O(1) lookup by UUID
+- Easy conversion to/from alists for serialization
+- Native elisp, no dependencies
+- Efficient for 100s-1000s of words
+
+** Why tabulated-list-mode?
+- Built-in sorting by column
+- Professional appearance
+- Standard Emacs UI pattern
+- Minimal code required
+
+** Why Minibuffer for Quiz Input?
+- Standard Emacs pattern
+- Integrates with ivy/counsel (your setup)
+- Simple implementation
+- Supports input history
+
+** Why Side Windows?
+- Matches your claudemacs pattern
+- Non-intrusive
+- Persistent across buffer switches
+- Easy to toggle
+
+** Why Plists Over Org-mode?
+- You explicitly noted org complexity
+- Simpler mental model
+- Direct elisp manipulation
+- Better for learning elisp
+- Still readable/editable
+
+* Custom Faces
+
+Define faces compatible with doom-challenger-deep theme:
+
+#+BEGIN_SRC elisp
+(defface zapiska-quiz-word
+  '((t :height 2.0 :weight bold :foreground "#cbe3e7"))
+  "Face for quiz word display.")
+
+(defface zapiska-correct
+  '((t :foreground "#62d196" :weight bold))
+  "Face for correct answers.")
+
+(defface zapiska-incorrect
+  '((t :foreground "#ff8080" :weight bold))
+  "Face for incorrect answers.")
+
+(defface zapiska-mastery-high
+  '((t :foreground "#62d196"))  ; Green
+  "Words with mastery 4-5")
+
+(defface zapiska-mastery-medium
+  '((t :foreground "#ffd580"))  ; Orange
+  "Words with mastery 2-3")
+
+(defface zapiska-mastery-low
+  '((t :foreground "#ff8080"))  ; Red
+  "Words with mastery 0-1")
+#+END_SRC
+
+* Files to Read Before Implementation
+
+1. =/home/cmatzenbach/.emacs.d/config/hydras.el= - Hydra patterns and structure
+2. =/home/cmatzenbach/.emacs.d/config/helper-functions.el= - Helper utilities and mode switching
+3. =/home/cmatzenbach/.emacs.d/init.el= (lines 420-550) - Keybinding patterns with general.el
+
+* Package Metadata
+
+#+BEGIN_SRC elisp
+;;; zapiska.el --- Russian vocabulary learning system -*- lexical-binding: t -*-
+;;
+;; Author: Chris Matzenbach
+;; Version: 0.1.0
+;; Package-Requires: ((emacs "27.1") (hydra "0.15.0"))
+;; Keywords: learning, languages, russian
+;; URL: https://github.com/cmatzenbach/zapiska
+;;
+;;; Commentary:
+;;
+;; Zapiska is a comprehensive Russian vocabulary learning system for Emacs.
+;;
+;; Features:
+;; - Vocabulary list management (add/edit/delete words)
+;; - Quiz mode with spaced repetition (SM-2 algorithm)
+;; - Visual Cyrillic keyboard reference
+;; - Statistics tracking and dashboard
+;; - CSV/Anki import/export
+;;
+;; Usage:
+;;   M-x zapiska-open-list    ; Manage vocabulary
+;;   M-x zapiska-start-quiz   ; Begin quiz session
+;;   M-x hydra-zapiska/body   ; Main menu
+;;
+;;; Code:
+
+(require 'hydra)
+
+;; Rest of implementation...
+
+(provide 'zapiska)
+;;; zapiska.el ends here
+#+END_SRC
+
+* Additional Recommendations
+
+** For Learning Elisp
+- Add extensive docstrings to all functions
+- Use descriptive variable names
+- Comment complex logic
+- Follow elisp conventions (prefix all functions with =zapiska-=)
+- Use =lexical-binding: t= in file header
+
+** Future Enhancements (Post-MVP)
+- Audio pronunciation integration (Forvo API)
+- Multiple languages (generalize beyond Russian)
+- Image associations for words
+- Conjugation/declension tables
+- Example sentences
+- Gamification (achievements, levels)
+- Mobile sync (via Dropbox/Git)
+
+** Testing Strategy
+- Manual testing with small vocabulary set
+- Test edge cases: empty database, single word, wrong answers only
+- Test persistence: save/load, backups
+- Test SM-2 scheduling edge cases
+
+* Summary
+
+This plan provides a clear roadmap for building Zapiska as a standalone, well-integrated Emacs package. The phased approach allows you to:
+
+1. Get a working prototype quickly (Phase 1)
+2. Add intelligent learning features (Phase 2)
+3. Improve user experience (Phase 3)
+4. Polish for sharing/distribution (Phase 4)
+
+The design follows your existing Emacs patterns (hydra, evil, general.el), uses simple data structures (plists in elisp files), and provides a great learning experience for elisp development.
