@@ -50,6 +50,12 @@
   :type 'directory
   :group 'zapiska)
 
+(defcustom zapiska-data-backup-directory
+  (expand-file-name "backups" zapiska-data-directory)
+  "Directory where vocabulary data backups are stored."
+  :type 'directory
+  :group 'zapiska)
+
 (defcustom zapiska-show-keyboard-in-quiz t
   "Whether to automatically show keyboard reference during quizzes."
   :type 'boolean
@@ -88,11 +94,11 @@ Each entry has the structure:
 
 (defvar zapiska-stats
   '(:total-sessions 0
-    :total-reviews 0
-    :total-correct 0
-    :current-streak 0
-    :longest-streak 0
-    :last-session nil)
+                    :total-reviews 0
+                    :total-correct 0
+                    :current-streak 0
+                    :longest-streak 0
+                    :last-session nil)
   "Global statistics plist tracking learning progress.")
 
 (defvar zapiska-quiz-session nil
@@ -148,9 +154,9 @@ Structure:
 (defun zapiska--generate-uuid ()
   "Generate a simple UUID for word entries."
   (format "%08x-%08x-%08x"
-            (random (expt 2 32))  ; Random 32-bit number (8 hex digits)
-            (random (expt 2 32))
-            (time-convert (current-time) 'integer)))
+          (random (expt 2 32))  ; Random 32-bit number (8 hex digits)
+          (random (expt 2 32))
+          (time-convert (current-time) 'integer)))
 
 (defun zapiska--hash-table-to-alist (hash-table)
   "Convert HASH-TABLE to an association list.
@@ -166,7 +172,7 @@ This is used for serializing the database to disk."
   "Convert ALIST to a hash table.
 
 This is used for loading the database from disk."
-  (let ((zapiska-data (make-hash-table)))
+  (let ((zapiska-data (make-hash-table :test 'equal)))
     (dolist (row alist)
       (puthash (car row) (cdr row) zapiska-data))
     zapiska-data))
@@ -174,6 +180,22 @@ This is used for loading the database from disk."
 (defun zapiska--get-data-file ()
   "Return the full path to the vocabulary data file."
   (expand-file-name "vocab-data.el" zapiska-data-directory))
+
+(defun zapiska--list-entries ()
+  "Transform the data into entries for 'tabulated-list-mode'."
+  (let ((results '()))
+    (maphash (lambda (key value)
+               (push
+                (list key (vector
+                           (plist-get value :russian)
+                           (plist-get value :english)
+                           (plist-get value :mastery-level)
+                           (plist-get value :next-review)
+                           (plist-get value :times-seen)
+                           (/ (plist-get value :times-correct) (plist-get value :times-seen))))
+                results))
+             zapiska-db)
+    results))
 
 
 (defun zapiska-add-test-data ()
@@ -206,8 +228,7 @@ Only for development use."
                           :times-correct 0
                           :created (current-time)
                           :notes notes)))
-        (puthash id entry zapiska-db)))
-    (message "Added %d test words" (length test-words))))
+        (puthash id entry zapiska-db)))))
 
 (defun zapiska-clear-all-data ()
   "Clear all vocabulary data. USE WITH CAUTION!"
@@ -223,13 +244,14 @@ Only for development use."
 
 Creates a backup before saving if file already exists."
   (interactive)
-  ;; TODO: Implement data saving
-  ;; Steps:
-  ;; 1. Ensure zapiska-data-directory exists (use make-directory with parents arg)
-  ;; 2. Convert zapiska-db to alist
-  ;; 3. Use with-temp-file to write to data file
-  ;; 4. Use prin1 to serialize the data structures
-  ;; 5. Add backup logic (optional for Phase 1)
+  (let ((data-file (zapiska--get-data-file)))
+    ;; Create timestamped backup of data file
+    (when (file-exists-p data-file)
+      (make-directory zapiska-data-backup-directory t)
+      (copy-file data-file
+                 (cl-concatenate 'string zapiska-data-backup-directory "/vocab-" (format-time-string "%Y-%m-%d-%H%M%S"))))
+    (make-directory zapiska-data-directory t)
+    (with-temp-file (zapiska--get-data-file) (prin1 (zapiska--hash-table-to-alist zapiska-db) (current-buffer))))
   (message "Saving vocabulary data..."))
 
 (defun zapiska-load-data ()
@@ -237,13 +259,17 @@ Creates a backup before saving if file already exists."
 
 Creates empty database if file doesn't exist."
   (interactive)
-  ;; TODO: Implement data loading
-  ;; Steps:
-  ;; 1. Check if data file exists
-  ;; 2. If exists, use load to read the file
-  ;; 3. Convert loaded alist back to hash table
-  ;; 4. If doesn't exist, initialize empty structures
-  (message "Loading vocabulary data..."))
+  (let ((data-file (zapiska--get-data-file)))
+    (if (file-exists-p data-file)
+        (progn
+          (setq zapiska-db (zapiska--alist-to-hash-table
+                            (with-temp-buffer
+                              (insert-file-contents data-file)
+                              (read (current-buffer)))))
+          (message "Successfully loaded data!"))
+      (progn
+        (setq zapiska-db (make-hash-table :test 'equal))
+        (message "Initialized empty database")))))
 
 ;; ======== VOCABULARY LIST MODE ========
 
@@ -261,8 +287,17 @@ Creates empty database if file doesn't exist."
   ;; TODO: Set up tabulated-list-mode
   ;; Steps:
   ;; 1. Define tabulated-list-format (columns: Russian, English, Mastery, Next Review, Seen, Accuracy)
+  (setq tabulated-list-format
+        [("Russian" 30 t)
+         ("English" 30 t)
+         ("Mastery" 1 t)
+         ("Next Review" 20 t)
+         ("Times Seen" 5 t)
+         ("Accuracy %" 5 t)])
   ;; 2. Set tabulated-list-entries to a function that generates entries from zapiska-db
+  (setq tabulated-list-entries #'zapiska--list-entries)
   ;; 3. Call tabulated-list-init-header
+  (tabulated-list-init-header)
   ;; 4. Set up evil keybindings
   )
 
@@ -272,6 +307,7 @@ Creates empty database if file doesn't exist."
   ;; TODO: Implement list opening
   ;; Steps:
   ;; 1. Switch to or create buffer named "*Zapiska List*"
+  (switch-to-buffer "*Zapiska List*")
   ;; 2. Enable zapiska-list-mode
   ;; 3. Call tabulated-list-print to populate
   )
