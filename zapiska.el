@@ -284,9 +284,6 @@ Creates empty database if file doesn't exist."
   "Major mode for managing Russian vocabulary list.
 
 \\{zapiska-list-mode-map}"
-  ;; TODO: Set up tabulated-list-mode
-  ;; Steps:
-  ;; 1. Define tabulated-list-format (columns: Russian, English, Mastery, Next Review, Seen, Accuracy)
   (setq tabulated-list-format
         [("Russian" 30 t)
          ("English" 30 t)
@@ -294,23 +291,27 @@ Creates empty database if file doesn't exist."
          ("Next Review" 20 t)
          ("Times Seen" 5 t)
          ("Accuracy %" 5 t)])
-  ;; 2. Set tabulated-list-entries to a function that generates entries from zapiska-db
   (setq tabulated-list-entries #'zapiska--list-entries)
-  ;; 3. Call tabulated-list-init-header
   (tabulated-list-init-header)
-  ;; 4. Set up evil keybindings
-  )
+  (evil-define-key 'normal zapiska-list-mode-map
+    "a" 'zapiska-add-word
+    "d" 'zapiska-delete-word
+    "e" 'zapiska-edit-word
+    (kbd "RET") 'zapiska-view-word-details
+    "r" 'zapiska-list-refresh
+    "q" 'zapiska-quit-list
+    "i" 'zapiska-import-csv
+    "x" 'zapiska-export-csv
+    "X" 'zapiska-export-anki)
+  ;; Auto-open hydra when entering list mode
+  (hydra-zapiska-list/body))
 
 (defun zapiska-open-list ()
   "Open the vocabulary list buffer."
   (interactive)
-  ;; TODO: Implement list opening
-  ;; Steps:
-  ;; 1. Switch to or create buffer named "*Zapiska List*"
   (switch-to-buffer "*Zapiska List*")
-  ;; 2. Enable zapiska-list-mode
-  ;; 3. Call tabulated-list-print to populate
-  )
+  (zapiska-list-mode)
+  (tabulated-list-print))
 
 (defun zapiska-add-word ()
   "Add a new word to the vocabulary database.
@@ -650,6 +651,25 @@ _q_: Quit quiz     _s_: Stats
   ("k" zapiska-toggle-keyboard-reference "keyboard")
   ("s" zapiska-show-statistics "stats")
   ("q" zapiska-quit-quiz "quit" :exit t))
+
+(defhydra hydra-zapiska-list (:color pink :hint nil)
+  "
+^Manage^           ^Import/Export^
+
+_a_: Add word      _i_: Import CSV
+_e_: Edit word     _x_: Export CSV
+_d_: Delete word   _X_: Export Anki
+_r_: Refresh
+_q_: Quit
+"
+  ("a" zapiska-add-word "add word")
+  ("e" zapiska-edit-word "edit word")
+  ("d" zapiska-delete-word "delete word")
+  ("r" zapiska-list-refresh "refresh")
+  ("i" zapiska-import-csv "import csv")
+  ("x" zapiska-export-csv "export csv")
+  ("X" zapiska-export-anki "export anki")
+  ("q" zapiska-quit-list "quit" :exit t))
 
 ;; ======== DISPLAY BUFFER CONFIGURATION ========
 
