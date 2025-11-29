@@ -318,17 +318,29 @@ Creates empty database if file doesn't exist."
 
 Prompts for Russian word, English translation, and optional notes."
   (interactive)
-  ;; TODO: Implement word addition
-  ;; Steps:
-  ;; 1. Prompt for russian word (read-string)
-  ;; 2. Prompt for english translation
-  ;; 3. Prompt for optional notes
-  ;; 4. Generate UUID
-  ;; 5. Create entry plist with default values
-  ;; 6. Add to zapiska-db
-  ;; 7. Save data
-  ;; 8. Refresh list if in list mode
-  (message "Adding word..."))
+  (let* ((new-word (read-string "Enter russian word "))
+         (translation (read-string "Enter english translation "))
+         (notes (read-string "Enter any notes "))
+         (uuid (zapiska--generate-uuid))
+         (new-entry (list :id uuid
+                    :russian new-word
+                    :english translation
+                    :mastery-level 0
+                    :easiness 2.5
+                    :repetitions 0
+                    :interval 0
+                    :next-review nil
+                    :last-reviewed nil
+                    :times-seen 0
+                    :times-correct 0
+                    :created (current-time)
+                    :notes notes)))
+    (puthash uuid new-entry zapiska-db)
+    (zapiska-save-data)
+    (when (eq major-mode 'zapiska-list-mode)
+      (zapiska-list-refresh))
+    (message "Adding word..."))
+  )
 
 (defun zapiska-delete-word ()
   "Delete the word at point in the vocabulary list."
@@ -357,8 +369,7 @@ Prompts for Russian word, English translation, and optional notes."
 (defun zapiska-list-refresh ()
   "Refresh the vocabulary list display."
   (interactive)
-  ;; TODO: Reload and redisplay the list
-  ;; Hint: Call tabulated-list-print with revert arg
+  (tabulated-list-print t)
   (message "Refreshing list..."))
 
 ;; ======== QUIZ MODE ========
