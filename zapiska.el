@@ -275,8 +275,6 @@ Creates empty database if file doesn't exist."
 
 (defvar zapiska-list-mode-map
   (let ((map (make-sparse-keymap)))
-    ;; TODO: Define keybindings using evil-define-key
-    ;; 'normal state bindings: a, d, e, RET, r, q, i, x, X
     map)
   "Keymap for `zapiska-list-mode'.")
 
@@ -339,20 +337,20 @@ Prompts for Russian word, English translation, and optional notes."
     (zapiska-save-data)
     (when (eq major-mode 'zapiska-list-mode)
       (zapiska-list-refresh))
-    (message "Adding word..."))
+    (message "Added word"))
   )
 
 (defun zapiska-delete-word ()
   "Delete the word at point in the vocabulary list."
   (interactive)
-  ;; TODO: Implement word deletion
-  ;; Steps:
-  ;; 1. Get word ID at current point (from tabulated-list-get-id)
-  ;; 2. Confirm with user (yes-or-no-p)
-  ;; 3. Remove from zapiska-db (remhash)
-  ;; 4. Save data
-  ;; 5. Refresh list
-  (message "Deleting word..."))
+  (setq uuid (tabulated-list-get-id (point)))
+  (let ((uuid (tabulated-list-get-id (point)))
+        (confirm (yes-or-no-p "Are you sure you want to delete this word?")))
+    (when (eq confirm t)
+      (remhash uuid zapiska-db)
+      (zapiska-save-data)
+      (zapiska-list-refresh)))
+  (message "Deleted word"))
 
 (defun zapiska-edit-word ()
   "Edit the word at point in the vocabulary list."
@@ -479,6 +477,10 @@ Displays a selection of words for passive review while working.
 
 Displays a random selection of words for passive learning."
   (interactive)
+  (switch-to-buffer "*Zapiska Study*")
+  (zapiska-study-mode)
+  (display-buffer-in-side-window)
+  (zapiska-study-refresh)
   ;; TODO: Implement study mode opening
   ;; Steps:
   ;; 1. Get or create buffer "*Zapiska Study*"
