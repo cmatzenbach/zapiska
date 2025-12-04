@@ -36,6 +36,7 @@
 (require 'cl-lib)
 (require 'hydra)
 (require 'evil)
+(require 'helpers (expand-file-name "helpers.el" (file-name-directory (or load-file-name buffer-file-name))))
 
 ;; ======== CUSTOMIZATION GROUP ========
 
@@ -189,10 +190,14 @@ This is used for loading the database from disk."
                 (list key (vector
                            (plist-get value :russian)
                            (plist-get value :english)
-                           (plist-get value :mastery-level)
-                           (plist-get value :next-review)
-                           (plist-get value :times-seen)
-                           (/ (plist-get value :times-correct) (plist-get value :times-seen))))
+                           (number-to-string (plist-get value :mastery-level))
+                           (if (plist-get value :next-review)
+                               (format-time-string "%Y-%m-%d" (plist-get value :next-review))
+                             "Never")
+                           (number-to-string (plist-get value :times-seen))
+                           (if (equal (plist-get value :times-seen) 0)
+                               "0%"
+                             (decimal-to-percentage-string (/ (plist-get value :times-correct) (plist-get value :times-seen)) 0))))
                 results))
              zapiska-db)
     results))
@@ -343,7 +348,6 @@ Prompts for Russian word, English translation, and optional notes."
 (defun zapiska-delete-word ()
   "Delete the word at point in the vocabulary list."
   (interactive)
-  (setq uuid (tabulated-list-get-id (point)))
   (let ((uuid (tabulated-list-get-id (point)))
         (confirm (yes-or-no-p "Are you sure you want to delete this word?")))
     (when (eq confirm t)
@@ -353,22 +357,31 @@ Prompts for Russian word, English translation, and optional notes."
   (message "Deleted word"))
 
 (defun zapiska-edit-word ()
-  "Edit the word at point in the vocabulary list."
+  "Edit the row at point in the vocabulary list."
   (interactive)
-  ;; TODO: Implement word editing
-  ;; Steps:
-  ;; 1. Get word entry at point
-  ;; 2. Prompt for new values (with current values as defaults)
-  ;; 3. Update entry in zapiska-db
-  ;; 4. Save data
-  ;; 5. Refresh list
-  (message "Editing word..."))
+  (let* ((uuid (tabulated-list-get-id (point)))
+         (current-list (gethash uuid zapiska-db))
+         (field-alist '(("Russian" . :russian)
+                        ("English" . :english)
+                        ("Notes" . :notes)))
+         (field-choice (completing-read "Field to edit: " field-alist))
+         (field-key (cdr (assoc field-choice field-alist)))
+         (updated-value (read-from-minibuffer "Change to: " (plist-get current-list field-key))))
+
+    (plist-put current-list field-key updated-value)
+    (zapiska-save-data)
+    (zapiska-list-refresh)))
 
 (defun zapiska-list-refresh ()
   "Refresh the vocabulary list display."
   (interactive)
   (tabulated-list-print t)
   (message "Refreshing list..."))
+
+(defun zapiska-quit-list ()
+  "Quit the vocabulary list buffer"
+  (interactive)
+  (kill-buffer "*Zapiska List*"))
 
 ;; ======== QUIZ MODE ========
 
