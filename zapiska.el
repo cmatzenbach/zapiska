@@ -387,8 +387,10 @@ Prompts for Russian word, English translation, and optional notes."
 
 (defvar zapiska-quiz-mode-map
   (let ((map (make-sparse-keymap)))
-    ;; TODO: Define keybindings
-    ;; Consider: n (next/skip), k (keyboard), s (stats), q (quit)
+    (define-key map (kbd "n") 'zapiska-quiz-skip-word)
+    (define-key map (kbd "k") 'zapiska-toggle-keyboard-reference)
+    (define-key map (kbd "s") 'zapiska-show-statistics)
+    (define-key map (kbd "q") 'zapiska-quit-quiz)
     map)
   "Keymap for `zapiska-quiz-mode'.")
 
@@ -396,7 +398,6 @@ Prompts for Russian word, English translation, and optional notes."
   "Major mode for vocabulary quiz sessions.
 
 \\{zapiska-quiz-mode-map}"
-  ;; TODO: Set up quiz mode
   ;; This mode displays the current word and handles quiz flow
   (setq buffer-read-only t))
 
@@ -405,13 +406,45 @@ Prompts for Russian word, English translation, and optional notes."
 
 FILTER can be:
   'all          - All words
-  'due          - Words due for review
-  'new          - Words never reviewed
+  'due          - Words due for review :next-review [date] >= :last-reviewed [date]
+  'new          - Words never reviewed - :times-seen 0
   'low-mastery  - Words with mastery level < 3"
   (interactive)
   ;; TODO: Implement quiz start
   ;; Steps:
   ;; 1. Filter words based on FILTER argument
+  ;; words are in zapiska-db
+  (let ((current-words '()))
+    (cond
+     ((eq filter 'all)
+      (maphash (lambda (key value)
+                 (push (list key value) current-words))
+               zapiska-db)
+      current-words)
+     ((eq filter 'due)
+      (maphash (lambda (key value)
+                 (when (and
+                        (plist-get value :next-review)
+                        (time-less-p
+                         (plist-get value :next-review)
+                         (current-time)))
+                   (push (list key value) current-words)))
+               zapiska-db)
+      current-words)
+     ((eq filter 'new)
+      (maphash (lambda (key value)
+                 (when (= (or (plist-get value :times-seen) 0) 0)
+                   (push (list key value) current-words)))
+               zapiska-db)
+      current-words)
+     ((eq filter 'low-mastery)
+      (maphash (lambda (key value)
+                 (when (< (or (plist-get value :mastery-level) 0) 3)
+                   (push (list key value) current-words)))
+               zapiska-db)
+      current-words))
+    (message "CURRENT WORDS: %S" current-words)
+    )
   ;; 2. Shuffle filtered words to create queue
   ;; 3. Initialize zapiska-quiz-session plist
   ;; 4. Switch to quiz buffer "*Zapiska Quiz*"
@@ -464,9 +497,8 @@ Returns t if correct, nil if incorrect."
 
 (defvar zapiska-study-mode-map
   (let ((map (make-sparse-keymap)))
-    ;; TODO: Define keybindings
-    ;; r - refresh/next batch
-    ;; q - quit
+    (define-key map (kbd "r") 'zapiska-study-refresh)
+    (define-key map (kbd "q") 'zapiska-study-quit)
     map)
   "Keymap for `zapiska-study-mode'.")
 
