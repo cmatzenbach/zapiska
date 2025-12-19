@@ -401,19 +401,9 @@ Prompts for Russian word, English translation, and optional notes."
   ;; This mode displays the current word and handles quiz flow
   (setq buffer-read-only t))
 
-(defun zapiska-start-quiz (filter)
-  "Start a quiz session with words matching FILTER.
-
-FILTER can be:
-  'all          - All words
-  'due          - Words due for review :next-review [date] >= :last-reviewed [date]
-  'new          - Words never reviewed - :times-seen 0
-  'low-mastery  - Words with mastery level < 3"
-  (interactive)
-  ;; TODO: Implement quiz start
-  ;; Steps:
-  ;; 1. Filter words based on FILTER argument
-  ;; words are in zapiska-db
+(defun zapiska--filter-words-for-quiz-session (filter)
+  "Apply current quiz FILTER to vocabulary list for quiz session.
+Quiz filter can be one of all|due|new|low-mastery."
   (let ((current-words '()))
     (cond
      ((eq filter 'all)
@@ -443,20 +433,80 @@ FILTER can be:
                    (push (list key value) current-words)))
                zapiska-db)
       current-words))
-    (message "CURRENT WORDS: %S" current-words)
-    )
-  ;; 2. Shuffle filtered words to create queue
-  ;; 3. Initialize zapiska-quiz-session plist
-  ;; 4. Switch to quiz buffer "*Zapiska Quiz*"
-  ;; 5. Enable zapiska-quiz-mode
-  ;; 6. Display first word
+    current-words))
+
+(defun zapiska--randomize-quiz-direction-type ()
+  "Randomize which language is being quizzed."
+  (if (eq (random 2) 1)
+      'russian-to-english
+    'english-to-russian))
+
+(defun zapiska--create-quiz-session-data (vocab-list)
+  "Generate plist containing VOCAB-LIST and all other data needed to run quiz."
+  (let* ((id-list '()))
+    (dolist (word vocab-list id-list)
+      (push (plist-get (cadr word) :id) id-list))
+    (list
+     :active t
+     :queue id-list
+     :incorrect-queue nil
+     :current-word-id nil
+     :direction (zapiska--randomize-quiz-direction-type)
+     :start-time (current-time)
+     :words-reviewed 0
+     :correct-count 0)))
+ 
+(defun zapiska--get-current-quiz-language-key (direction)
+  "Return key for accessing current word in zapiska-db based off a given DIRECTION."
+  (if (equal direction 'russian-to-english)
+      :russian
+    :english))
+
+(defun zapiska-start-quiz (filter)
+  "Start a quiz session with words matching FILTER.
+
+FILTER can be:
+  'all          - All words
+  'due          - Words due for review
+                   :next-review [date] >= :last-reviewed [date]
+  'new          - Words never reviewed - :times-seen 0
+  'low-mastery  - Words with mastery level < 3"
+  (interactive)
+  (let* ((current-words (zapiska--filter-words-for-quiz-session filter))
+         (queue (shuffle-list current-words))
+         (initial-plist (zapiska--create-quiz-session-data queue)))
+    (setq zapiska-quiz-session initial-plist)
+    (switch-to-buffer-other-window "*Zapiska Quiz*")
+    (zapiska-quiz-mode)
+    (zapiska-quiz-next-word))
+
   (message "Starting quiz with filter: %s" filter))
 
 (defun zapiska-quiz-next-word ()
   "Display the next word in the quiz session."
   ;; TODO: Implement next word logic
   ;; Steps:
-  ;; 1. Check if queue is empty (if so, show completion message)
+  ;; 1. Check if queue is empty (if so, show completion message) 
+  (if (not (plist-get zapiska-quiz-session :queue))
+      (progn
+        (plist-put zapiska-quiz-session :active nil)
+        (message "Quiz completed!")
+        )
+    (progn
+      (let* ((inhibit-read-only t)
+            (current-word-id (pop (plist-get zapiska-quiz-session :queue)))
+            (current-word (plist-get
+                           (gethash current-word-id zapiska-db)
+                           (zapiska--get-current-quiz-language-key (plist-get zapiska-quiz-session :direction)))))
+        (plist-put zapiska-quiz-session :current-word-id current-word)
+        (plist-put zapiska-quiz-session :words-reviewed (+ (plist-get zapiska-quiz-session :words-reviewed) 1))
+        (erase-buffer)
+        (insert (format "%s" current-word))
+        (setq user-answer (read-from-minibuffer "Translation: "))
+        )
+      )
+    
+    )
   ;; 2. Pop next word ID from queue
   ;; 3. Randomly choose direction (russian-to-english or english-to-russian)
   ;; 4. Update quiz session state

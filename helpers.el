@@ -47,6 +47,19 @@ DECIMAL-PLACES is an optional integer for rounding (e.g., 2 for 75.00%)."
          (result (format format-string percentage)))
     result))
 
+(defun shuffle-list (list)
+  "Shuffles LIST by converting to a vector, shuffling in-place, and converting back."
+  (let* ((v (seq-into list 'vector)) ;; Convert list to a vector
+         (n (length v)))
+    ;; Fisher-Yates shuffle on the vector
+    (dotimes (i (1- n) v)
+      (let* ((j (+ i (random (- n i))))
+             (temp (aref v i)))
+        (aset v i (aref v j))
+        (aset v j temp)))
+    ;; Convert the shuffled vector back to a list
+    (seq-into v 'list)))
+
 
 (provide 'helpers)
 ;;; helpers.el ends here
